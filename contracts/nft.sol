@@ -10,16 +10,19 @@ contract GiftCard is ERC721 {
     Counters.Counter private _tokenIds;
 
     // mapping of token id => card balance
-    mapping(uint256 => uint256) public balances;
+    mapping(uint256 => uint256) private _balances;
 
     // mapping of token id => claim code
     mapping(uint256 => string) private _codes;
 
     // mapping of token id => whether code was applied
-    mapping(uint256 => bool) public codesApplied;
+    mapping(uint256 => bool) private _codesApplied;
 
     // mapping of claim code => whether claim code has been minted
-    mapping(string => bool) public claimCodeMinted;
+    mapping(string => bool) private _claimCodeMinted;
+
+    // mapping of tokenId => original minter
+    mapping(uint256 => address) private _minters;
 
     constructor() ERC721("Amazon Gift Card", "AMZ-GFT") {}
 
@@ -38,32 +41,58 @@ contract GiftCard is ERC721 {
         uint256 balance,
         string calldata claimCode
     ) external onlyPositiveBalance(balance) returns (uint256) {
-        require(claimCodeMinted[claimCode] == false, "Code already exists");
+        require(_claimCodeMinted[claimCode] == false, "Code already exists");
         // TODO: Implement check for amazon code format (regex)
         uint256 newId = _tokenIds.current();
         _mint(to, newId);
 
-        balances[newId] = balance;
+        _balances[newId] = balance;
         _codes[newId] = claimCode;
-        codesApplied[newId] = false;
-        claimCodeMinted[claimCode] = true;
+        _codesApplied[newId] = false;
+        _claimCodeMinted[claimCode] = true;
+        _minters[newId] = msg.sender;
 
         _tokenIds.increment();
 
         return newId;
     }
 
+    // potential minter can check so they don't waste gas minting
+    function checkIfCardIsMinted(string calldata claimCode)
+        external
+        view
+        returns (bool)
+    {
+        return _claimCodeMinted[claimCode];
+    }
+
     function getBalance(uint256 tokenId) external view returns (uint256) {
-        return balances[tokenId];
+        return _balances[tokenId];
     }
 
     function getClaimCode(uint256 tokenId)
         external
-        view
         onlyTokenOwner(tokenId)
         returns (string memory)
     {
+        if (_minters[tokenId] != ownerOf(tokenId)) {
+            // ensures that if token was sold and new owner views code,
+            // contract marks gift card as applied
+            _codesApplied[tokenId] = true;
+        }
         return _codes[tokenId];
+    }
+
+    function getOriginalMinter(uint256 tokenId)
+        external
+        view
+        returns (address)
+    {
+        return _minters[tokenId];
+    }
+
+    function isCodeApplied(uint256 tokenId) external view returns (bool) {
+        return _codesApplied[tokenId];
     }
 
     function changeBalance(uint256 newBalance, uint256 tokenId)
@@ -72,7 +101,7 @@ contract GiftCard is ERC721 {
         onlyPositiveBalance(newBalance)
         returns (uint256)
     {
-        balances[tokenId] = newBalance;
+        _balances[tokenId] = newBalance;
         return newBalance;
     }
 }
