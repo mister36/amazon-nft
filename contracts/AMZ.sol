@@ -74,7 +74,7 @@ contract GiftCard is ERC721 {
         onlyTokenOwner(tokenId)
         returns (string memory)
     {
-        if (_minters[tokenId] != ownerOf(tokenId)) {
+        if (_minters[tokenId] != ownerOf(tokenId) && !_codesApplied[tokenId]) {
             // ensures that if token was sold and new owner views code,
             // contract marks gift card as applied
             _codesApplied[tokenId] = true;
@@ -92,15 +92,5 @@ contract GiftCard is ERC721 {
 
     function isCodeApplied(uint256 tokenId) external view returns (bool) {
         return _codesApplied[tokenId];
-    }
-
-    function changeBalance(uint256 newBalance, uint256 tokenId)
-        external
-        onlyTokenOwner(tokenId)
-        onlyPositiveBalance(newBalance)
-        returns (uint256)
-    {
-        _balances[tokenId] = newBalance;
-        return newBalance;
     }
 }

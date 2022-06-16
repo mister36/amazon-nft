@@ -22,8 +22,4 @@ interface IGiftCard is IERC721 {
     function getOriginalMinter(uint256 tokenId) external view returns (address);
 
     function isCodeApplied(uint256 tokenId) external view returns (bool);
-
-    function changeBalance(uint256 newBalance, uint256 tokenId)
-        external
-        returns (uint256);
 }
