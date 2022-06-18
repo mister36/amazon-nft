@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.14;
 
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "./IGiftCard.sol";
 import "./HitchensUnorderedKeySet.sol";
 
@@ -13,6 +14,7 @@ contract Marketplace {
         address seller;
         uint256 tokenId;
         uint256 price; // in wei
+        uint256 balance;
         bool active;
     }
 
@@ -28,16 +30,15 @@ contract Marketplace {
     event Sale(address, address, uint256, uint256); // seller, buyer, token id, price
     event Listed(address, uint256, uint256); // seller, token id, price
 
-    // TODO: Add "delete listing" event
-
     function listCard(
         uint256 tokenId,
         uint256 price,
         address tokenAddress
     ) external payable returns (Listing memory) {
         IGiftCard card = IGiftCard(tokenAddress);
+        uint256 balance = card.getBalance(tokenId);
         require(
-            price <= card.getBalance(tokenId),
+            price <= balance,
             "Price must be equal to / lower than balance"
         );
         require(
@@ -57,6 +58,7 @@ contract Marketplace {
             msg.sender,
             tokenId,
             price,
+            balance,
             true
         );
         _listings[tokenId] = listing;
@@ -66,15 +68,56 @@ contract Marketplace {
         return listing;
     }
 
+    function removeCard(uint256 tokenId) external {
+        Listing memory listing = _listings[tokenId];
+        require(msg.sender == listing.seller, "Must be the seller");
+        require(listing.active, "Listing not active");
+
+        delete _listings[tokenId];
+        _listingKeys.remove(bytes32(tokenId));
+        payable(msg.sender).transfer(_stakes[tokenId]);
+        delete _stakes[tokenId];
+    }
+
+    function updatePrice(uint256 tokenId, uint256 newPrice) external payable {
+        Listing storage listing = _listings[tokenId];
+        uint256 diffFromStake = msg.value + _stakes[tokenId] - (newPrice / 3);
+
+        require(msg.sender == listing.seller, "Must be the seller");
+        require(listing.active, "Listing not active");
+        require(
+            newPrice <= listing.balance,
+            "Price must be equal to / lower than balance"
+        );
+
+        if (diffFromStake > 0) {
+            string memory diffFromStakeError = string.concat(
+                "Must add",
+                Strings.toString(diffFromStake)
+            );
+            diffFromStakeError = string.concat(
+                diffFromStakeError,
+                "more to stake"
+            );
+            revert(diffFromStakeError);
+        }
+
+        listing.price = newPrice;
+        _stakes[tokenId] += msg.value;
+    }
+
     function buyCard(uint256 tokenId) external payable {
         Listing storage listing = _listings[tokenId];
         require(msg.sender != listing.seller, "Cannot buy your own listing");
         require(msg.value >= listing.price, "Insufficient funds");
 
-        /* TODO: Check to see if seller still owns the card
-        (might have sold it outside of marketplace). If they don't,
-        delete the listing
-        */
+        if (IGiftCard(listing.tokenAddress).isCodeApplied(tokenId)) {
+            // if card was applied, delete listing, revert call
+            delete _listings[tokenId];
+            delete _stakes[tokenId];
+            _listingKeys.remove(bytes32(tokenId));
+            revert("Gift card already applied. Deleting from marketplace...");
+        }
 
         IGiftCard(listing.tokenAddress).transferFrom(
             listing.seller,
