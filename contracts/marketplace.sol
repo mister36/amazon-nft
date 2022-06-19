@@ -2,26 +2,31 @@
 pragma solidity ^0.8.14;
 
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "@chainlink/contracts/src/v0.6/interfaces/AggregatorV3Interface.sol";
 import "./IGiftCard.sol";
 import "./HitchensUnorderedKeySet.sol";
+import "./math.sol";
 
 contract Marketplace {
     using HitchensUnorderedKeySetLib for HitchensUnorderedKeySetLib.Set;
     HitchensUnorderedKeySetLib.Set private _listingKeys;
 
+    AggregatorV3Interface private priceFeed =
+        AggregatorV3Interface("0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada");
+
     struct Listing {
         address tokenAddress;
         address seller;
         uint256 tokenId;
-        uint256 price; // in wei
-        uint256 balance;
+        uint256 price; // USD
+        uint256 balance; // USD
         bool active;
     }
 
     // mapping of token id => listing struct
     mapping(uint256 => Listing) private _listings;
 
-    // mapping of token id => stake amount
+    // mapping of token id => stake amount in wei matic
     mapping(uint256 => uint256) private _stakes;
 
     // mapping of token id => block number when card was sold
@@ -29,6 +34,21 @@ contract Marketplace {
 
     event Sale(address, address, uint256, uint256); // seller, buyer, token id, price
     event Listed(address, uint256, uint256); // seller, token id, price
+
+    function toUSD(uint256 weiMatic) private pure returns (uint256) {
+        uint256 matic = wdiv(weiMatic, 10**18);
+        (, uint256 price, , , , ) = priceFeed.latestRoundData();
+
+        price = wdiv(price, 10**8); // chainlink returns 8 places, 30000000 => .3
+        return wmul(price, matic);
+    }
+
+    function toWeiMatic(uint256 usd) private pure returns (uint256) {
+        (, uint256 price, , , , ) = priceFeed.latestRoundData();
+
+        price = wdiv(price, 10**8); // chainlink returns 8 places, 30000000 => .3
+        return wdiv(usd, price);
+    }
 
     function listCard(
         uint256 tokenId,
@@ -42,7 +62,7 @@ contract Marketplace {
             "Price must be equal to / lower than balance"
         );
         require(
-            msg.value >= price / 3,
+            toUSD(msg.value) >= price / 3,
             "Stake value must be at least 1/3 of price"
         );
         require(msg.sender == card.ownerOf(tokenId), "Card isn't yours");
@@ -81,7 +101,9 @@ contract Marketplace {
 
     function updatePrice(uint256 tokenId, uint256 newPrice) external payable {
         Listing storage listing = _listings[tokenId];
-        uint256 diffFromStake = msg.value + _stakes[tokenId] - (newPrice / 3);
+        uint256 diffFromStake = toUSD(
+            msg.value + _stakes[tokenId] - (toWeiMatic(newPrice / 3))
+        );
 
         require(msg.sender == listing.seller, "Must be the seller");
         require(listing.active, "Listing not active");
@@ -109,7 +131,7 @@ contract Marketplace {
     function buyCard(uint256 tokenId) external payable {
         Listing storage listing = _listings[tokenId];
         require(msg.sender != listing.seller, "Cannot buy your own listing");
-        require(msg.value >= listing.price, "Insufficient funds");
+        require(toUSD(msg.value) >= listing.price, "Insufficient funds");
 
         if (IGiftCard(listing.tokenAddress).isCodeApplied(tokenId)) {
             // if card was applied, delete listing, revert call
@@ -128,7 +150,7 @@ contract Marketplace {
         _soldBlockNumbers[tokenId] = block.number;
         listing.active = false;
 
-        emit Sale(listing.seller, msg.sender, tokenId, msg.value);
+        emit Sale(listing.seller, msg.sender, tokenId, toUSD(msg.value));
     }
 
     function verifyCard(
