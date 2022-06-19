@@ -32,6 +32,16 @@ contract Marketplace {
     // mapping of token id => block number when card was sold
     mapping(uint256 => uint256) private _soldBlockNumbers;
 
+    modifier onlyTokenExists(uint256 tokenId) {
+        require(_listingKeys.exists(bytes32(tokenId)), "Listing doesn't exist");
+        _;
+    }
+
+    modifier onlySeller(address seller) {
+        require(msg.sender == seller, "Must be the seller");
+        _;
+    }
+
     event Sale(address, address, uint256, uint256); // seller, buyer, token id, price
     event Listed(address, uint256, uint256); // seller, token id, price
 
@@ -88,9 +98,11 @@ contract Marketplace {
         return listing;
     }
 
-    function removeCard(uint256 tokenId) external {
+    function removeCard(uint256 tokenId)
+        external
+        onlySeller(_listings[tokenId].seller)
+    {
         Listing memory listing = _listings[tokenId];
-        require(msg.sender == listing.seller, "Must be the seller");
         require(listing.active, "Listing not active");
 
         delete _listings[tokenId];
@@ -99,13 +111,16 @@ contract Marketplace {
         delete _stakes[tokenId];
     }
 
-    function updatePrice(uint256 tokenId, uint256 newPrice) external payable {
+    function updatePrice(uint256 tokenId, uint256 newPrice)
+        external
+        payable
+        onlySeller(_listings[tokenId].seller)
+    {
         Listing storage listing = _listings[tokenId];
         uint256 diffFromStake = toUSD(
             msg.value + _stakes[tokenId] - (toWeiMatic(newPrice / 3))
         );
 
-        require(msg.sender == listing.seller, "Must be the seller");
         require(listing.active, "Listing not active");
         require(
             newPrice <= listing.balance,
@@ -158,7 +173,7 @@ contract Marketplace {
         uint256 tokenId,
         uint256 priceDiff,
         address tokenAddress
-    ) external {
+    ) external onlyTokenExists(tokenId) {
         IGiftCard card = IGiftCard(tokenAddress);
         Listing memory listing = _listings[tokenId];
         address seller = listing.seller;
@@ -170,10 +185,6 @@ contract Marketplace {
         require(
             priceDiff < card.getBalance(tokenId),
             "Balance of zero or below not possible"
-        );
-        require(
-            _listingKeys.exists(bytes32(tokenId)),
-            "Listing does not exist"
         );
         require(
             msg.sender == listing.seller || msg.sender == card.ownerOf(tokenId),
@@ -216,9 +227,9 @@ contract Marketplace {
     function getListing(uint256 tokenId)
         external
         view
+        onlyTokenExists(tokenId)
         returns (Listing memory)
     {
-        require(_listingKeys.exists(bytes32(tokenId)), "Listing doesn't exist");
         return _listings[tokenId];
     }
 

@@ -25,22 +25,13 @@ contract GiftCard is ERC721 {
 
     constructor() ERC721("Amazon Gift Card", "AMZ-GFT") {}
 
-    modifier onlyTokenOwner(uint256 tokenId) {
-        require(msg.sender == ownerOf(tokenId), "!owner");
-        _;
-    }
-
-    modifier onlyPositiveBalance(uint256 balance) {
-        require(balance > 0, "Balance must be postive");
-        _;
-    }
-
     function mintCard(
         address to,
         uint256 balance,
         string calldata claimCode
-    ) external onlyPositiveBalance(balance) returns (uint256) {
+    ) external returns (uint256) {
         require(_claimCodeMinted[claimCode] == false, "Code already exists");
+        require(balance > 0, "Balance must be postive");
         // TODO: Implement check for amazon code format (regex)
         uint256 newId = _tokenIds.current();
         _mint(to, newId);
@@ -69,11 +60,8 @@ contract GiftCard is ERC721 {
         return _balances[tokenId];
     }
 
-    function getClaimCode(uint256 tokenId)
-        external
-        onlyTokenOwner(tokenId)
-        returns (string memory)
-    {
+    function getClaimCode(uint256 tokenId) external returns (string memory) {
+        require(msg.sender == ownerOf(tokenId), "!owner");
         if (_minters[tokenId] != ownerOf(tokenId) && !_codesApplied[tokenId]) {
             // ensures that if token was sold and new owner views code,
             // contract marks gift card as applied
