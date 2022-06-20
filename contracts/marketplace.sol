@@ -9,10 +9,12 @@ import "./math.sol";
 
 contract Marketplace {
     using HitchensUnorderedKeySetLib for HitchensUnorderedKeySetLib.Set;
+    using DSMath for uint256;
+
     HitchensUnorderedKeySetLib.Set private _listingKeys;
 
     AggregatorV3Interface private priceFeed =
-        AggregatorV3Interface("0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada");
+        AggregatorV3Interface(0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada);
 
     struct Listing {
         address tokenAddress;
@@ -45,19 +47,27 @@ contract Marketplace {
     event Sale(address, address, uint256, uint256); // seller, buyer, token id, price
     event Listed(address, uint256, uint256); // seller, token id, price
 
-    function toUSD(uint256 weiMatic) private pure returns (uint256) {
-        uint256 matic = wdiv(weiMatic, 10**18);
-        (, uint256 price, , , , ) = priceFeed.latestRoundData();
+    function toUSD(uint256 weiMatic) private view returns (uint256) {
+        uint256 matic = weiMatic.wdiv(10**18);
+        (, int256 price, , , ) = priceFeed.latestRoundData();
 
-        price = wdiv(price, 10**8); // chainlink returns 8 places, 30000000 => .3
-        return wmul(price, matic);
+        // conversion of price to uint256
+        uint256 uPrice;
+        price < 0 ? uPrice = uint256(price * -1) : uPrice = uint256(price);
+
+        uPrice = uPrice.wdiv(10**8); // chainlink returns 8 places, 30000000 => .3
+        return uPrice.wmul(matic);
     }
 
-    function toWeiMatic(uint256 usd) private pure returns (uint256) {
-        (, uint256 price, , , , ) = priceFeed.latestRoundData();
+    function toWeiMatic(uint256 usd) private view returns (uint256) {
+        (, int256 price, , , ) = priceFeed.latestRoundData();
 
-        price = wdiv(price, 10**8); // chainlink returns 8 places, 30000000 => .3
-        return wdiv(usd, price);
+        // conversion of price to uint256
+        uint256 uPrice;
+        price < 0 ? uPrice = uint256(price * -1) : uPrice = uint256(price);
+
+        uPrice = uPrice.wdiv(10**8); // chainlink returns 8 places, 30000000 => .3
+        return usd.wdiv(uPrice);
     }
 
     function listCard(
