@@ -38,7 +38,6 @@ contract GiftCard is ERC721 {
 
         _balances[newId] = balance;
         _codes[newId] = claimCode;
-        _codesApplied[newId] = false;
         _claimCodeMinted[claimCode] = true;
         _minters[newId] = msg.sender;
 
@@ -48,7 +47,7 @@ contract GiftCard is ERC721 {
     }
 
     // potential minter can check so they don't waste gas minting
-    function checkIfCardIsMinted(string calldata claimCode)
+    function wasCardMinted(string calldata claimCode)
         external
         view
         returns (bool)
@@ -61,6 +60,7 @@ contract GiftCard is ERC721 {
     }
 
     function getClaimCode(uint256 tokenId) external returns (string memory) {
+        require(_exists(tokenId), "Token doesn't exist");
         require(msg.sender == ownerOf(tokenId), "!owner");
         if (_minters[tokenId] != ownerOf(tokenId) && !_codesApplied[tokenId]) {
             // ensures that if token was sold and new owner views code,

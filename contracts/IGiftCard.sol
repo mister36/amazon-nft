@@ -10,7 +10,7 @@ interface IGiftCard is IERC721 {
         string calldata claimCode
     ) external returns (uint256);
 
-    function checkIfCardIsMinted(string calldata claimCode)
+    function wasCardMinted(string calldata claimCode)
         external
         view
         returns (bool);
