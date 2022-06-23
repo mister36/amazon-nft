@@ -14,7 +14,7 @@ contract Marketplace {
     HitchensUnorderedKeySetLib.Set private _listingKeys;
 
     AggregatorV3Interface private priceFeed =
-        AggregatorV3Interface(0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada);
+        AggregatorV3Interface(0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada); // testnet address
 
     struct Listing {
         address tokenAddress;
@@ -47,7 +47,7 @@ contract Marketplace {
     event Sale(address, address, uint256, uint256); // seller, buyer, token id, price
     event Listed(address, uint256, uint256); // seller, token id, price
 
-    function toUSD(uint256 weiMatic) private view returns (uint256) {
+    function toUSD(uint256 weiMatic) public view returns (uint256) {
         uint256 matic = weiMatic.wdiv(10**18);
         (, int256 price, , , ) = priceFeed.latestRoundData();
 
@@ -55,19 +55,22 @@ contract Marketplace {
         uint256 uPrice;
         price < 0 ? uPrice = uint256(price * -1) : uPrice = uint256(price);
 
-        uPrice = uPrice.wdiv(10**8); // chainlink returns 8 places, 30000000 => .3
-        return uPrice.wmul(matic);
+        uPrice = uPrice.wdiv(10**8);
+        return uPrice.wmul(matic); // e.g, 2005201775366785895
     }
 
-    function toWeiMatic(uint256 usd) private view returns (uint256) {
+    // TODO: convert to private
+    function toWeiMatic(uint256 usd) public view returns (uint256) {
         (, int256 price, , , ) = priceFeed.latestRoundData();
 
         // conversion of price to uint256
         uint256 uPrice;
         price < 0 ? uPrice = uint256(price * -1) : uPrice = uint256(price);
 
-        uPrice = uPrice.wdiv(10**8); // chainlink returns 8 places, 30000000 => .3
-        return usd.wdiv(uPrice);
+        uPrice = uPrice.wdiv(10**16);
+        usd = usd.wdiv(uPrice);
+
+        return usd.wmul(10**10); // e.g, 215733845 is really 2.15733845
     }
 
     function listCard(
