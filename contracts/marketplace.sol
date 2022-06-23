@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.14;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
-import "@chainlink/contracts/src/v0.6/interfaces/AggregatorV3Interface.sol";
 import "./IGiftCard.sol";
 import "./HitchensUnorderedKeySet.sol";
 import "./math.sol";
@@ -13,22 +13,22 @@ contract Marketplace {
 
     HitchensUnorderedKeySetLib.Set private _listingKeys;
 
-    AggregatorV3Interface private priceFeed =
-        AggregatorV3Interface(0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada); // testnet address
+    IERC20 USDC;
+    IGiftCard Card;
+    // mumbai testnet USDC = 0xe11A86849d99F524cAC3E7A0Ec1241828e332C62
 
     struct Listing {
-        address tokenAddress;
         address seller;
         uint256 tokenId;
-        uint256 price; // USD
-        uint256 balance; // USD
+        uint256 price;
+        uint256 balance;
         bool active;
     }
 
     // mapping of token id => listing struct
     mapping(uint256 => Listing) private _listings;
 
-    // mapping of token id => stake amount in wei matic
+    // mapping of token id => stake amount
     mapping(uint256 => uint256) private _stakes;
 
     // mapping of token id => block number when card was sold
@@ -46,58 +46,40 @@ contract Marketplace {
 
     event Sale(address, address, uint256, uint256); // seller, buyer, token id, price
     event Listed(address, uint256, uint256); // seller, token id, price
+    event Delist(address, uint256); // seller, token id
 
-    function toUSD(uint256 weiMatic) public view returns (uint256) {
-        uint256 matic = weiMatic.wdiv(10**18);
-        (, int256 price, , , ) = priceFeed.latestRoundData();
-
-        // conversion of price to uint256
-        uint256 uPrice;
-        price < 0 ? uPrice = uint256(price * -1) : uPrice = uint256(price);
-
-        uPrice = uPrice.wdiv(10**8);
-        return uPrice.wmul(matic); // e.g, 2005201775366785895
-    }
-
-    // TODO: convert to private
-    function toWeiMatic(uint256 usd) public view returns (uint256) {
-        (, int256 price, , , ) = priceFeed.latestRoundData();
-
-        // conversion of price to uint256
-        uint256 uPrice;
-        price < 0 ? uPrice = uint256(price * -1) : uPrice = uint256(price);
-
-        uPrice = uPrice.wdiv(10**16);
-        usd = usd.wdiv(uPrice);
-
-        return usd.wmul(10**10); // e.g, 215733845 is really 2.15733845
+    constructor(address usdc, address giftCard) {
+        USDC = IERC20(usdc);
+        Card = IGiftCard(giftCard);
     }
 
     function listCard(
         uint256 tokenId,
         uint256 price,
-        address tokenAddress
-    ) external payable returns (Listing memory) {
-        IGiftCard card = IGiftCard(tokenAddress);
-        uint256 balance = card.getBalance(tokenId);
+        uint256 stake
+    ) external returns (Listing memory) {
+        uint256 balance = Card.getBalance(tokenId);
         require(
             price <= balance,
             "Price must be equal to / lower than balance"
         );
         require(
-            toUSD(msg.value) >= price / 3,
+            stake >= price / 3,
             "Stake value must be at least 1/3 of price"
         );
-        require(msg.sender == card.ownerOf(tokenId), "Card isn't yours");
+        require(msg.sender == Card.ownerOf(tokenId), "Card isn't yours");
         require(
-            card.isCodeApplied(tokenId) == false,
+            Card.isCodeApplied(tokenId) == false,
             "Claim code already applied"
         );
 
-        _stakes[tokenId] += msg.value;
+        // takes stake and escrows gift card
+        USDC.transferFrom(msg.sender, address(this), stake);
+        Card.transferFrom(msg.sender, address(this), tokenId);
+
+        _stakes[tokenId] += stake;
 
         Listing memory listing = Listing(
-            tokenAddress,
             msg.sender,
             tokenId,
             price,
@@ -120,19 +102,24 @@ contract Marketplace {
 
         delete _listings[tokenId];
         _listingKeys.remove(bytes32(tokenId));
-        payable(msg.sender).transfer(_stakes[tokenId]);
+
+        USDC.transferFrom(address(this), msg.sender, _stakes[tokenId]);
+        Card.transferFrom(address(this), msg.sender, tokenId);
+
         delete _stakes[tokenId];
+        emit Delist(msg.sender, tokenId);
     }
 
-    function updatePrice(uint256 tokenId, uint256 newPrice)
-        external
-        payable
-        onlySeller(_listings[tokenId].seller)
-    {
+    function updatePrice(
+        uint256 tokenId,
+        uint256 newPrice,
+        uint256 additionalStake
+    ) external onlySeller(_listings[tokenId].seller) {
         Listing storage listing = _listings[tokenId];
-        uint256 diffFromStake = toUSD(
-            msg.value + _stakes[tokenId] - (toWeiMatic(newPrice / 3))
-        );
+
+        uint256 diffFromStake = additionalStake +
+            _stakes[tokenId] -
+            (newPrice / 3);
 
         require(listing.active, "Listing not active");
         require(
@@ -152,56 +139,44 @@ contract Marketplace {
             revert(diffFromStakeError);
         }
 
+        USDC.transferFrom(msg.sender, address(this), additionalStake);
+
         listing.price = newPrice;
-        _stakes[tokenId] += msg.value;
+        _stakes[tokenId] += additionalStake;
     }
 
-    function buyCard(uint256 tokenId) external payable {
+    function buyCard(uint256 tokenId) external {
         Listing storage listing = _listings[tokenId];
         require(msg.sender != listing.seller, "Cannot buy your own listing");
-        require(toUSD(msg.value) >= listing.price, "Insufficient funds");
 
-        if (IGiftCard(listing.tokenAddress).isCodeApplied(tokenId)) {
-            // if card was applied, delete listing, revert call
-            delete _listings[tokenId];
-            delete _stakes[tokenId];
-            _listingKeys.remove(bytes32(tokenId));
-            revert("Gift card already applied. Deleting from marketplace...");
-        }
-
-        IGiftCard(listing.tokenAddress).transferFrom(
-            listing.seller,
-            msg.sender,
-            tokenId
-        );
+        USDC.transferFrom(msg.sender, listing.seller, listing.price);
+        Card.transferFrom(address(this), msg.sender, tokenId);
 
         _soldBlockNumbers[tokenId] = block.number;
         listing.active = false;
 
-        emit Sale(listing.seller, msg.sender, tokenId, toUSD(msg.value));
+        emit Sale(listing.seller, msg.sender, tokenId, listing.price);
     }
 
     function verifyCard(
         bool codeWorks,
         uint256 tokenId,
-        uint256 priceDiff,
-        address tokenAddress
+        uint256 priceDiff
     ) external onlyTokenExists(tokenId) {
-        IGiftCard card = IGiftCard(tokenAddress);
         Listing memory listing = _listings[tokenId];
         address seller = listing.seller;
 
         require(
-            card.isCodeApplied(tokenId) == true,
+            Card.isCodeApplied(tokenId) == true,
             "Code was not applied yet"
         );
         require(
-            priceDiff < card.getBalance(tokenId),
+            priceDiff < Card.getBalance(tokenId),
             "Balance of zero or below not possible"
         );
         require(
-            msg.sender == listing.seller || msg.sender == card.ownerOf(tokenId),
-            "Must be the owner or seller"
+            msg.sender == listing.seller || msg.sender == Card.ownerOf(tokenId),
+            "Must be the buyer or seller"
         );
 
         if (msg.sender == listing.seller) {
@@ -210,10 +185,18 @@ contract Marketplace {
                 "Must wait approx. 5 min to verify your own card"
             );
 
-            payable(msg.sender).transfer(listing.price + _stakes[tokenId]);
+            USDC.transferFrom(
+                address(this),
+                msg.sender,
+                listing.price + _stakes[tokenId]
+            );
         } else {
             if (codeWorks && priceDiff == 0) {
-                payable(seller).transfer(listing.price + _stakes[tokenId]);
+                USDC.transferFrom(
+                    address(this),
+                    msg.sender,
+                    listing.price + _stakes[tokenId]
+                );
             } else if (codeWorks && priceDiff > 0) {
                 uint256 payment = 0;
                 uint256 trueBalance = listing.price - priceDiff;
@@ -227,7 +210,7 @@ contract Marketplace {
                */
                 if (trueBalance > 0) payment = trueBalance;
 
-                payable(seller).transfer(payment);
+                USDC.transferFrom(address(this), seller, payment);
             }
             // if !codeWorks, seller doesn't get stake or buyer money
         }

@@ -1,5 +1,5 @@
 import { expect, use } from "chai";
-import { Contract, BigNumber, constants, ethers } from "ethers";
+import { Contract, constants } from "ethers";
 import { deployContract, MockProvider, solidity } from "ethereum-waffle";
 import GiftCard from "../build/GiftCard.json";
 
