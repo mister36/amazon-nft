@@ -13,8 +13,8 @@ contract Marketplace {
 
     HitchensUnorderedKeySetLib.Set private _listingKeys;
 
-    IERC20 USDC;
-    IGiftCard Card;
+    IERC20 private USDC;
+    IGiftCard private Card;
     // mumbai testnet USDC = 0xe11A86849d99F524cAC3E7A0Ec1241828e332C62
 
     struct Listing {
@@ -48,9 +48,9 @@ contract Marketplace {
     event Listed(address, uint256, uint256); // seller, token id, price
     event Delist(address, uint256); // seller, token id
 
-    constructor(address usdc, address giftCard) {
-        USDC = IERC20(usdc);
-        Card = IGiftCard(giftCard);
+    constructor(IERC20 _USDC, IGiftCard _Card) {
+        USDC = _USDC;
+        Card = _Card;
     }
 
     function listCard(
