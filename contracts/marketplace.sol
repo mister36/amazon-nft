@@ -35,12 +35,15 @@ contract Marketplace {
     mapping(uint256 => uint256) private _soldBlockNumbers;
 
     modifier onlyTokenExists(uint256 tokenId) {
-        require(_listingKeys.exists(bytes32(tokenId)), "Listing doesn't exist");
+        require(
+            _listingKeys.exists(bytes32(tokenId + 1)),
+            "Listing doesn't exist"
+        );
         _;
     }
 
     modifier onlySeller(address seller) {
-        require(msg.sender == seller, "Must be the seller");
+        require(msg.sender == seller, "!seller");
         _;
     }
 
@@ -87,7 +90,7 @@ contract Marketplace {
             true
         );
         _listings[tokenId] = listing;
-        _listingKeys.insert(bytes32(tokenId));
+        _listingKeys.insert(bytes32(tokenId + 1));
 
         emit Listed(msg.sender, tokenId, price);
         return listing;
@@ -101,9 +104,9 @@ contract Marketplace {
         require(listing.active, "Listing not active");
 
         delete _listings[tokenId];
-        _listingKeys.remove(bytes32(tokenId));
+        _listingKeys.remove(bytes32(tokenId + 1));
 
-        USDC.transferFrom(address(this), msg.sender, _stakes[tokenId]);
+        USDC.transfer(msg.sender, _stakes[tokenId]);
         Card.transferFrom(address(this), msg.sender, tokenId);
 
         delete _stakes[tokenId];
@@ -217,7 +220,7 @@ contract Marketplace {
 
         delete _stakes[tokenId];
         delete _listings[tokenId];
-        _listingKeys.remove(bytes32(tokenId));
+        _listingKeys.remove(bytes32(tokenId + 1));
     }
 
     function getListing(uint256 tokenId)
