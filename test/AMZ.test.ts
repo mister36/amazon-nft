@@ -8,7 +8,7 @@ use(solidity);
 describe("GiftCard", () => {
   const [wallet, otherWallet] = new MockProvider().getWallets();
   let card: Contract;
-  const claimCode = "XRYZ-34SD2S-2KSS";
+  const claimCode = "812ee676cf06ba72316862fd3dabe7e403c7395bda62243b7b0eea5eb";
   const balance = 25;
 
   beforeEach(async () => {

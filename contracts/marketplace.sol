@@ -13,8 +13,8 @@ contract Marketplace {
 
     HitchensUnorderedKeySetLib.Set private _listingKeys;
 
-    IERC20 private USDC;
-    IGiftCard private Card;
+    IERC20 private immutable USDC;
+    IGiftCard private immutable Card;
     // mumbai testnet USDC = 0xe11A86849d99F524cAC3E7A0Ec1241828e332C62
 
     struct Listing {

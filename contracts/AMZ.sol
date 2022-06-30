@@ -33,7 +33,6 @@ contract GiftCard is ERC721, IGiftCard {
     ) external returns (uint256) {
         require(_claimCodeMinted[claimCode] == false, "Code already exists");
         require(balance > 0, "Balance must be postive");
-        // TODO: Implement check for amazon code format (regex)
         uint256 newId = _tokenIds.current();
         _mint(to, newId);
 
