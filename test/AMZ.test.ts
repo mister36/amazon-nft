@@ -1,58 +1,115 @@
 import { expect, use } from "chai";
-import { Contract, constants } from "ethers";
+import { Contract, constants, Wallet } from "ethers";
 import { deployContract, MockProvider, solidity } from "ethereum-waffle";
+import EthCrypto from "eth-crypto";
+
+import sha256 from "crypto-js/sha256";
+import Base64 from "crypto-js/enc-base64";
 import GiftCard from "../build/GiftCard.json";
 
 use(solidity);
 
-describe("GiftCard", () => {
+const encrypt = async (code: string, from: Wallet, to: Wallet) => {
+  const signature = EthCrypto.sign(
+    from.privateKey,
+    EthCrypto.hash.keccak256(code)
+  );
+  const payload = {
+    message: code,
+    signature,
+  };
+
+  const encrypted = await EthCrypto.encryptWithPublicKey(
+    to.publicKey.slice(2),
+    JSON.stringify(payload)
+  );
+
+  return EthCrypto.cipher.stringify(encrypted);
+};
+
+const decrypt = async (code: string, receiver: Wallet) => {
+  const encryptedObject = EthCrypto.cipher.parse(code);
+
+  const decrypted = await EthCrypto.decryptWithPrivateKey(
+    receiver.privateKey,
+    encryptedObject
+  );
+  return JSON.parse(decrypted).message;
+};
+
+describe("GiftCard", async () => {
   const [wallet, otherWallet] = new MockProvider().getWallets();
   let card: Contract;
-  const claimCode = "812ee676cf06ba72316862fd3dabe7e403c7395bda62243b7b0eea5eb";
+  const code = "xyz-sd-23ds";
+
+  const hashedClaimCode = sha256(code).toString(Base64);
+  const encryptedClaimCode = await encrypt(code, wallet, otherWallet);
+
   const balance = 25;
 
   beforeEach(async () => {
     card = await deployContract(wallet, GiftCard);
   });
 
-  it("Mints a card", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
+  it("Mints a card to other wallet", async () => {
+    await expect(
+      card.mintCard(
+        otherWallet.address,
+        balance,
+        encryptedClaimCode,
+        hashedClaimCode
+      )
+    )
       .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
+      .withArgs(constants.AddressZero, otherWallet.address, 0);
   });
 
   it("Can't mint 2nd card because claim code already exists", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
+    );
 
     await expect(
-      card.mintCard(wallet.address, 50, claimCode)
+      card.mintCard(
+        otherWallet.address,
+        balance,
+        encryptedClaimCode,
+        hashedClaimCode
+      )
     ).to.be.revertedWith("Code already exists");
   });
 
   it("Can't mint card with zero balance", async () => {
     await expect(
-      card.mintCard(wallet.address, 0, claimCode)
+      card.mintCard(otherWallet.address, 0, encryptedClaimCode, hashedClaimCode)
     ).to.be.revertedWith("Balance must be postive");
   });
 
   it("Confirms card was minted already", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
+    );
 
-    expect(await card.wasCardMinted(claimCode)).to.equal(true);
+    expect(await card.wasCardMinted(hashedClaimCode)).to.equal(true);
   });
 
   it("Confirms card was not minted already", async () => {
-    expect(await card.wasCardMinted(claimCode)).to.equal(false);
+    expect(await card.wasCardMinted(hashedClaimCode)).to.equal(false);
   });
 
   it("Returns correct balance", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
+    );
 
     expect(await card.getBalance(0)).to.equal(balance);
   });
@@ -64,78 +121,76 @@ describe("GiftCard", () => {
   });
 
   it("Doesn't reveal claim code since caller isn't the owner", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
-
-    await expect(card.connect(otherWallet).getClaimCode(0)).to.be.revertedWith(
-      "!owner"
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
     );
-  });
 
-  it("Reveals claim code", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
-
-    expect(await card.callStatic.getClaimCode(0)).to.equal(claimCode);
+    await expect(card.getClaimCode(0)).to.be.revertedWith("!owner");
   });
 
   it("Reveals and applies claim code", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
-
-    await expect(card.transferFrom(wallet.address, otherWallet.address, 0))
-      .to.emit(card, "Transfer")
-      .withArgs(wallet.address, otherWallet.address, 0);
-
-    expect(await card.connect(otherWallet).callStatic.getClaimCode(0)).to.equal(
-      claimCode
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
     );
+
     await card.connect(otherWallet).getClaimCode(0);
+    expect(await card.connect(otherWallet).callStatic.getClaimCode(0)).to.equal(
+      encryptedClaimCode
+    );
 
     expect(await card.isCodeApplied(0)).to.equal(true);
   });
 
-  it("Returns 'code not applied' since owner is the minter and past owner didn't reveal code", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
-
-    await expect(card.transferFrom(wallet.address, otherWallet.address, 0))
-      .to.emit(card, "Transfer")
-      .withArgs(wallet.address, otherWallet.address, 0);
-
-    await expect(
-      card
-        .connect(otherWallet)
-        .transferFrom(otherWallet.address, wallet.address, 0)
-    )
-      .to.emit(card, "Transfer")
-      .withArgs(otherWallet.address, wallet.address, 0);
-
-    expect(await card.connect(wallet).callStatic.getClaimCode(0)).to.equal(
-      claimCode
+  it("Returns 'code not applied'", async () => {
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
     );
-    await card.getClaimCode(0);
 
     expect(await card.isCodeApplied(0)).to.equal(false);
   });
 
-  it("Returns zero address since card hasn't been minted", async () => {
-    expect(await card.getOriginalMinter(0)).to.equal(constants.AddressZero);
+  it("Returns correct address for seller", async () => {
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
+    );
+
+    expect(await card.getSeller(0)).to.equal(wallet.address);
   });
 
-  it("Returns the original minter", async () => {
-    await expect(card.mintCard(wallet.address, balance, claimCode))
-      .to.emit(card, "Transfer")
-      .withArgs(constants.AddressZero, wallet.address, 0);
+  // Technically tests for the cryptography
+  it("Allows the buyer to decrypt the claim code", async () => {
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
+    );
 
-    await expect(card.transferFrom(wallet.address, otherWallet.address, 0))
-      .to.emit(card, "Transfer")
-      .withArgs(wallet.address, otherWallet.address, 0);
+    const _code = await card.connect(otherWallet).callStatic.getClaimCode(0);
+    expect(await decrypt(_code, otherWallet)).to.equal(code);
+  });
 
-    expect(await card.getOriginalMinter(0)).to.equal(wallet.address);
+  it("Won't allow non-buyers to decrypt claim code", async () => {
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
+    );
+
+    const _code = await card.connect(otherWallet).callStatic.getClaimCode(0);
+    expect(await decrypt(_code, otherWallet)).to.equal(code);
   });
 });

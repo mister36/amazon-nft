@@ -7,10 +7,11 @@ interface IGiftCard is IERC721 {
     function mintCard(
         address to,
         uint256 balance,
-        string calldata claimCode
+        string calldata encryptedCode,
+        string calldata hashedCode
     ) external returns (uint256);
 
-    function wasCardMinted(string calldata claimCode)
+    function wasCardMinted(string calldata hashedCode)
         external
         view
         returns (bool);
@@ -19,7 +20,7 @@ interface IGiftCard is IERC721 {
 
     function getClaimCode(uint256 tokenId) external returns (string memory);
 
-    function getOriginalMinter(uint256 tokenId) external view returns (address);
+    function getSeller(uint256 tokenId) external view returns (address);
 
     function isCodeApplied(uint256 tokenId) external view returns (bool);
 }
