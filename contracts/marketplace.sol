@@ -19,24 +19,25 @@ contract Marketplace {
 
     struct Listing {
         address seller;
-        uint256 tokenId;
+        string hashedCode;
         uint256 price;
         uint256 balance;
         bool active;
+        address lastBidder;
     }
 
-    // mapping of token id => listing struct
-    mapping(uint256 => Listing) private _listings;
+    // mapping of hashed code => listing struct
+    mapping(string => Listing) private _listings;
 
-    // mapping of token id => stake amount
-    mapping(uint256 => uint256) private _stakes;
+    // mapping of hashed claim code => stake amount
+    mapping(string => uint256) private _stakes;
 
-    // mapping of token id => block number when card was sold
-    mapping(uint256 => uint256) private _soldBlockNumbers;
+    // mapping of hashed claim code => block number when card was sold
+    mapping(string => uint256) private _soldBlockNumbers;
 
-    modifier onlyTokenExists(uint256 tokenId) {
+    modifier onlyTokenExists(string calldata hashedCode) {
         require(
-            _listingKeys.exists(bytes32(tokenId + 1)),
+            _listingKeys.exists(bytes32(bytes(hashedCode))),
             "Listing doesn't exist"
         );
         _;
@@ -47,9 +48,12 @@ contract Marketplace {
         _;
     }
 
-    event Sale(address, address, uint256, uint256); // seller, buyer, token id, price
-    event Listed(address, uint256, uint256); // seller, token id, price
-    event Delist(address, uint256); // seller, token id
+    event Sale(address, address, uint256); // seller, buyer, price
+    event Listed(address, uint256); // seller, price
+    event PriceUpdate(address, uint256); // seller, new price
+    event BuyRequest(address, string); // buyer, hashed claim code
+    event Verified(address, address, int256, string); // seller, buyer, price, hashcode
+    event Delist(address); // seller
 
     constructor(IERC20 _USDC, IGiftCard _Card) {
         USDC = _USDC;
@@ -57,11 +61,11 @@ contract Marketplace {
     }
 
     function listCard(
-        uint256 tokenId,
+        string calldata hashedCode,
         uint256 price,
+        uint256 balance,
         uint256 stake
     ) external returns (Listing memory) {
-        uint256 balance = Card.getBalance(tokenId);
         require(
             price <= balance,
             "Price must be equal to / lower than balance"
@@ -70,59 +74,56 @@ contract Marketplace {
             stake >= price / 3,
             "Stake value must be at least 1/3 of price"
         );
-        require(msg.sender == Card.ownerOf(tokenId), "Card isn't yours");
         require(
-            Card.isCodeApplied(tokenId) == false,
-            "Claim code already applied"
+            Card.wasCardMinted(hashedCode) == false,
+            "Claim code already minted"
         );
 
         // takes stake and escrows gift card
         USDC.transferFrom(msg.sender, address(this), stake);
-        Card.transferFrom(msg.sender, address(this), tokenId);
 
-        _stakes[tokenId] += stake;
+        _stakes[hashedCode] += stake;
 
         Listing memory listing = Listing(
             msg.sender,
-            tokenId,
+            hashedCode,
             price,
             balance,
-            true
+            true,
+            address(0)
         );
-        _listings[tokenId] = listing;
-        _listingKeys.insert(bytes32(tokenId + 1));
+        _listings[hashedCode] = listing;
+        _listingKeys.insert(bytes32(bytes(hashedCode)));
 
-        emit Listed(msg.sender, tokenId, price);
+        emit Listed(msg.sender, price);
         return listing;
     }
 
-    function removeCard(uint256 tokenId)
+    function removeCard(string calldata hashedCode)
         external
-        onlySeller(_listings[tokenId].seller)
+        onlySeller(_listings[hashedCode].seller)
     {
-        Listing memory listing = _listings[tokenId];
+        Listing memory listing = _listings[hashedCode];
         require(listing.active, "Listing not active");
 
-        delete _listings[tokenId];
-        _listingKeys.remove(bytes32(tokenId + 1));
+        delete _listings[hashedCode];
+        _listingKeys.remove(bytes32(bytes(hashedCode)));
 
-        USDC.transfer(msg.sender, _stakes[tokenId]);
-        Card.transferFrom(address(this), msg.sender, tokenId);
+        USDC.transfer(msg.sender, _stakes[hashedCode]);
 
-        delete _stakes[tokenId];
-        emit Delist(msg.sender, tokenId);
+        delete _stakes[hashedCode];
+        emit Delist(msg.sender);
     }
 
     function updatePrice(
-        uint256 tokenId,
+        string calldata hashedCode,
         uint256 newPrice,
         uint256 additionalStake
-    ) external onlySeller(_listings[tokenId].seller) {
-        Listing storage listing = _listings[tokenId];
+    ) external onlySeller(_listings[hashedCode].seller) {
+        Listing storage listing = _listings[hashedCode];
 
-        uint256 diffFromStake = additionalStake +
-            _stakes[tokenId] -
-            (newPrice / 3);
+        int256 diffFromStake = int256(additionalStake + _stakes[hashedCode]) -
+            int256(newPrice / 3);
 
         require(listing.active, "Listing not active");
         require(
@@ -130,14 +131,10 @@ contract Marketplace {
             "Price must be equal to / lower than balance"
         );
 
-        if (diffFromStake > 0) {
+        if (diffFromStake < 0) {
             string memory diffFromStakeError = string.concat(
-                "Must add",
-                Strings.toString(diffFromStake)
-            );
-            diffFromStakeError = string.concat(
-                diffFromStakeError,
-                "more to stake"
+                "Stake to add: ",
+                Strings.toString(uint256(-diffFromStake))
             );
             revert(diffFromStakeError);
         }
@@ -145,64 +142,95 @@ contract Marketplace {
         USDC.transferFrom(msg.sender, address(this), additionalStake);
 
         listing.price = newPrice;
-        _stakes[tokenId] += additionalStake;
+        _stakes[hashedCode] += additionalStake;
+
+        emit PriceUpdate(msg.sender, newPrice);
     }
 
-    function buyCard(uint256 tokenId) external {
-        Listing storage listing = _listings[tokenId];
+    function sendBuyRequest(string calldata hashedCode) external {
+        Listing storage listing = _listings[hashedCode];
         require(msg.sender != listing.seller, "Cannot buy your own listing");
+        require(listing.active, "Listing is not active");
 
-        USDC.transferFrom(msg.sender, listing.seller, listing.price);
-        Card.transferFrom(address(this), msg.sender, tokenId);
+        // make the last bidder
+        listing.lastBidder = msg.sender;
 
-        _soldBlockNumbers[tokenId] = block.number;
+        emit BuyRequest(msg.sender, hashedCode);
+    }
+
+    function acceptBuyRequest(
+        string calldata encryptedCode,
+        string calldata hashedCode
+    ) external onlySeller(_listings[hashedCode].seller) {
+        Listing storage listing = _listings[hashedCode];
+        require(listing.lastBidder != address(0), "No bids on listing");
+
+        USDC.transferFrom(listing.lastBidder, address(this), listing.price);
+
+        // mints gift card to buyer
+        Card.mintCard(
+            listing.lastBidder,
+            listing.balance,
+            encryptedCode,
+            hashedCode
+        );
+
+        _soldBlockNumbers[hashedCode] = block.number;
         listing.active = false;
 
-        emit Sale(listing.seller, msg.sender, tokenId, listing.price);
+        emit Sale(msg.sender, listing.lastBidder, listing.price);
     }
 
     function verifyCard(
         bool codeWorks,
-        uint256 tokenId,
+        string calldata hashedCode,
         uint256 priceDiff
-    ) external onlyTokenExists(tokenId) {
-        Listing memory listing = _listings[tokenId];
+    ) external onlyTokenExists(hashedCode) {
+        Listing memory listing = _listings[hashedCode];
         address seller = listing.seller;
 
         require(
-            Card.isCodeApplied(tokenId) == true,
+            Card.isCodeApplied(hashedCode) == true,
             "Code was not applied yet"
         );
         require(
-            priceDiff < Card.getBalance(tokenId),
+            priceDiff < Card.getBalance(hashedCode),
             "Balance of zero or below not possible"
         );
         require(
-            msg.sender == listing.seller || msg.sender == Card.ownerOf(tokenId),
+            msg.sender == listing.seller ||
+                msg.sender == Card.getBuyer(hashedCode),
             "Must be the buyer or seller"
         );
 
         if (msg.sender == listing.seller) {
             require(
-                block.number - _soldBlockNumbers[tokenId] >= 20,
+                block.number - _soldBlockNumbers[hashedCode] >= 20,
                 "Must wait approx. 5 min to verify your own card"
-            );
+            ); // TODO: Will have to adjust "20" since polygon has shorter block time
 
-            USDC.transferFrom(
-                address(this),
+            USDC.transfer(msg.sender, listing.price + _stakes[hashedCode]);
+
+            emit Verified(
                 msg.sender,
-                listing.price + _stakes[tokenId]
-            );
+                listing.lastBidder,
+                int256(listing.price),
+                hashedCode
+            ); // seller, buyer, price, hashcode
         } else {
             if (codeWorks && priceDiff == 0) {
-                USDC.transferFrom(
-                    address(this),
-                    msg.sender,
-                    listing.price + _stakes[tokenId]
+                USDC.transfer(
+                    listing.seller,
+                    listing.price + _stakes[hashedCode]
+                );
+                emit Verified(
+                    listing.seller,
+                    listing.lastBidder,
+                    int256(listing.price),
+                    hashedCode
                 );
             } else if (codeWorks && priceDiff > 0) {
-                uint256 payment = 0;
-                uint256 trueBalance = listing.price - priceDiff;
+                int256 truePrice = int256(listing.price) - int256(priceDiff);
 
                 /*
                 Without check, could be possible that .transfer(value)
@@ -211,25 +239,38 @@ contract Marketplace {
                 then listing.price - priceDiff = $-90. Seller should be 
                 sent no money in this case.
                */
-                if (trueBalance > 0) payment = trueBalance;
-
-                USDC.transferFrom(address(this), seller, payment);
+                if (truePrice > 0) {
+                    USDC.transfer(seller, uint256(truePrice)); // no stake
+                }
+                emit Verified(
+                    listing.seller,
+                    listing.lastBidder,
+                    truePrice,
+                    hashedCode
+                );
+            } else {
+                // if !codeWorks, seller doesn't get stake or buyer money
+                emit Verified(
+                    listing.seller,
+                    listing.lastBidder,
+                    0,
+                    hashedCode
+                );
             }
-            // if !codeWorks, seller doesn't get stake or buyer money
         }
 
-        delete _stakes[tokenId];
-        delete _listings[tokenId];
-        _listingKeys.remove(bytes32(tokenId + 1));
+        delete _stakes[hashedCode];
+        delete _listings[hashedCode];
+        _listingKeys.remove(bytes32(bytes(hashedCode)));
     }
 
-    function getListing(uint256 tokenId)
+    function getListing(string calldata hashedCode)
         external
         view
-        onlyTokenExists(tokenId)
+        onlyTokenExists(hashedCode)
         returns (Listing memory)
     {
-        return _listings[tokenId];
+        return _listings[hashedCode];
     }
 
     function getAllListings() external view returns (bytes32[] memory) {

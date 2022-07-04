@@ -1,5 +1,5 @@
 {
   "require": "ts-node/register/transpile-only",
-  "spec": "test/**/marketplace.test.{js,ts}",
-  "TODO": "change 'spec' -> test/**/*.test.{js,ts}"
+  "spec": "test/**/*.test.{js,ts}",
+  "timeout": 5000
 }

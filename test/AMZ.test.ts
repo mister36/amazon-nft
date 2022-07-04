@@ -1,41 +1,13 @@
 import { expect, use } from "chai";
 import { Contract, constants, Wallet } from "ethers";
 import { deployContract, MockProvider, solidity } from "ethereum-waffle";
-import EthCrypto from "eth-crypto";
+import { encrypt, decrypt } from "./utils";
 
 import sha256 from "crypto-js/sha256";
 import Base64 from "crypto-js/enc-base64";
 import GiftCard from "../build/GiftCard.json";
 
 use(solidity);
-
-const encrypt = async (code: string, from: Wallet, to: Wallet) => {
-  const signature = EthCrypto.sign(
-    from.privateKey,
-    EthCrypto.hash.keccak256(code)
-  );
-  const payload = {
-    message: code,
-    signature,
-  };
-
-  const encrypted = await EthCrypto.encryptWithPublicKey(
-    to.publicKey.slice(2),
-    JSON.stringify(payload)
-  );
-
-  return EthCrypto.cipher.stringify(encrypted);
-};
-
-const decrypt = async (code: string, receiver: Wallet) => {
-  const encryptedObject = EthCrypto.cipher.parse(code);
-
-  const decrypted = await EthCrypto.decryptWithPrivateKey(
-    receiver.privateKey,
-    encryptedObject
-  );
-  return JSON.parse(decrypted).message;
-};
 
 describe("GiftCard", async () => {
   const [wallet, otherWallet] = new MockProvider().getWallets();
@@ -111,11 +83,11 @@ describe("GiftCard", async () => {
       hashedClaimCode
     );
 
-    expect(await card.getBalance(0)).to.equal(balance);
+    expect(await card.getBalance(hashedClaimCode)).to.equal(balance);
   });
 
   it("Can't reveal claim code for token that doesn't exist", async () => {
-    await expect(card.getClaimCode(0)).to.be.revertedWith(
+    await expect(card.getClaimCode(hashedClaimCode)).to.be.revertedWith(
       "Token doesn't exist"
     );
   });
@@ -128,7 +100,9 @@ describe("GiftCard", async () => {
       hashedClaimCode
     );
 
-    await expect(card.getClaimCode(0)).to.be.revertedWith("!owner");
+    await expect(card.getClaimCode(hashedClaimCode)).to.be.revertedWith(
+      "!owner"
+    );
   });
 
   it("Reveals and applies claim code", async () => {
@@ -139,12 +113,12 @@ describe("GiftCard", async () => {
       hashedClaimCode
     );
 
-    await card.connect(otherWallet).getClaimCode(0);
-    expect(await card.connect(otherWallet).callStatic.getClaimCode(0)).to.equal(
-      encryptedClaimCode
-    );
+    await card.connect(otherWallet).getClaimCode(hashedClaimCode);
+    expect(
+      await card.connect(otherWallet).callStatic.getClaimCode(hashedClaimCode)
+    ).to.equal(encryptedClaimCode);
 
-    expect(await card.isCodeApplied(0)).to.equal(true);
+    expect(await card.isCodeApplied(hashedClaimCode)).to.equal(true);
   });
 
   it("Returns 'code not applied'", async () => {
@@ -155,7 +129,7 @@ describe("GiftCard", async () => {
       hashedClaimCode
     );
 
-    expect(await card.isCodeApplied(0)).to.equal(false);
+    expect(await card.isCodeApplied(hashedClaimCode)).to.equal(false);
   });
 
   it("Returns correct address for seller", async () => {
@@ -166,7 +140,18 @@ describe("GiftCard", async () => {
       hashedClaimCode
     );
 
-    expect(await card.getSeller(0)).to.equal(wallet.address);
+    expect(await card.getSeller(hashedClaimCode)).to.equal(wallet.address);
+  });
+
+  it("Returns correct address for buyer", async () => {
+    await card.mintCard(
+      otherWallet.address,
+      balance,
+      encryptedClaimCode,
+      hashedClaimCode
+    );
+
+    expect(await card.getBuyer(hashedClaimCode)).to.equal(otherWallet.address);
   });
 
   // Technically tests for the cryptography
@@ -178,7 +163,9 @@ describe("GiftCard", async () => {
       hashedClaimCode
     );
 
-    const _code = await card.connect(otherWallet).callStatic.getClaimCode(0);
+    const _code = await card
+      .connect(otherWallet)
+      .callStatic.getClaimCode(hashedClaimCode);
     expect(await decrypt(_code, otherWallet)).to.equal(code);
   });
 
@@ -190,7 +177,9 @@ describe("GiftCard", async () => {
       hashedClaimCode
     );
 
-    const _code = await card.connect(otherWallet).callStatic.getClaimCode(0);
+    const _code = await card
+      .connect(otherWallet)
+      .callStatic.getClaimCode(hashedClaimCode);
     expect(await decrypt(_code, otherWallet)).to.equal(code);
   });
 });
